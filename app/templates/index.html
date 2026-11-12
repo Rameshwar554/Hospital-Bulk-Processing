@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hospital Bulk Upload | Paribus Challenge</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f4f6fb; color: #172033; font: 15px system-ui, Arial; }
+    main { max-width: 760px; margin: 55px auto; padding: 0 18px; }
+    .card { background: white; padding: 30px; border-radius: 16px; box-shadow: 0 8px 30px #17203312; }
+    h1 { margin: 0 0 8px; font-size: 27px; }
+    .muted { color: #687386; line-height: 1.6; }
+    .drop { display: block; border: 2px dashed #aab5c5; border-radius: 12px; padding: 28px; text-align: center; margin: 24px 0; background: #fafbfe; }
+    input { max-width: 100%; margin-top: 14px; }
+    button { background: #2457d6; color: white; border: 0; padding: 12px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: wait; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #101827; color: #dce7ff; padding: 18px; border-radius: 10px; margin-top: 20px; max-height: 460px; overflow: auto; }
+    .note { font-size: 13px; color: #687386; margin-top: 14px; }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card">
+      <h1>Hospital Bulk Processing</h1>
+      <p class="muted">Upload a CSV file to create up to 20 hospital records. The batch is activated only when every hospital is created successfully.</p>
+      <form id="uploadForm">
+        <label class="drop">Choose your CSV file<br><input id="csvFile" type="file" accept=".csv,text/csv" required></label>
+        <button id="submitBtn" type="submit">Upload and process</button>
+      </form>
+      <p class="note">Required columns: name,address · Optional column: phone · Maximum: 20 hospitals</p>
+      <div id="message" class="muted" role="status"></div>
+      <pre id="result" hidden></pre>
+    </section>
+  </main>
+  <script>
+    const form = document.getElementById("uploadForm");
+    const button = document.getElementById("submitBtn");
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const file = document.getElementById("csvFile").files[0];
+      if (!file) return;
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      button.disabled = true;
+      document.getElementById("message").textContent = "Processing hospitals…";
+      const output = document.getElementById("result");
+      output.hidden = true;
+
+      try {
+        const response = await fetch("/hospitals/bulk", {
+          method: "POST",
+          body: formData
+        });
+        const body = await response.json();
+        output.textContent = JSON.stringify(body, null, 2);
+        output.hidden = false;
+        document.getElementById("message").textContent =
+          response.ok ? "Processing finished." : "Request failed.";
+      } catch (error) {
+        document.getElementById("message").textContent =
+          "Could not reach the server: " + error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
