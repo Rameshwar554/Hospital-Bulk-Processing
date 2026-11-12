@@ -1,21 +1,54 @@
-# Paribus Python Challenge — Hospital Bulk Processing System
+# Hospital Bulk Processing System
 
-A FastAPI application that accepts a CSV upload, creates hospital records through the supplied Hospital Directory API, and activates the batch only after all records are created successfully.
+A FastAPI service built for the **Paribus Python Challenge**. It accepts a CSV containing hospital details, creates each hospital through the provided Hospital Directory API, and activates the batch only after every hospital has been created successfully.
 
-## Features
+## Live Application
 
-- `POST /hospitals/bulk` — upload and process a CSV (maximum 20 hospitals).
-- `POST /hospitals/validate` — validate CSV structure without creating records.
-- `GET /hospitals/bulk/{batch_id}` — retrieve the last result stored for a batch.
-- `GET /health` — deployment health check.
-- Browser-based upload page at `/`.
-- Concurrent outbound requests with a configurable concurrency limit.
-- UUID batch IDs, request timeouts, per-row failure reporting, and conditional activation.
-- Pytest tests and Docker support.
+- **Application:** https://hospital-bulk-processing-fczp.onrender.com
+- **Swagger / OpenAPI documentation:** https://hospital-bulk-processing-fczp.onrender.com/docs
+- **Health check:** https://hospital-bulk-processing-fczp.onrender.com/health
+- **Hospital Directory API (upstream):** https://hospital-directory.onrender.com
+- **Upstream API documentation:** https://hospital-directory.onrender.com/docs
+- **Source code:** https://github.com/Rameshwar554/Hospital-Bulk-Processing
 
-## CSV format
+> The application is hosted on Render's free instance. After a period of inactivity, the service may spin down; the first request after that can take around 50 seconds or more while it starts.
 
-The header must contain `name,address`. `phone` is optional.
+## Assignment Overview
+
+The task is to build a separate bulk-processing service that integrates with the supplied Hospital Directory API.
+
+### Functional requirements
+
+1. Accept a CSV file through a multipart form upload.
+2. Validate the CSV structure and hospital records.
+3. Generate a unique UUID for each bulk-processing batch.
+4. Create each hospital by calling `POST /hospitals/` on the upstream Hospital Directory API, passing the batch ID as `creation_batch_id`.
+5. Activate the batch through the upstream `PATCH /hospitals/batch/{batch_id}/activate` endpoint only when all hospital creation requests succeed.
+6. Return processing information, including the batch ID, counts, per-hospital outcomes, processing time, and batch activation status.
+
+### Constraints
+
+- Maximum of **20 hospital records per CSV**.
+- CSV upload size limit: **1 MB**.
+- Required CSV columns: `name`, `address`.
+- Optional CSV column: `phone`.
+- Python with FastAPI.
+- In-memory batch-result storage is acceptable for this assignment.
+- Public deployment is required; this application is deployed on Render.
+
+## Application API
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/` | Browser-based CSV upload interface |
+| `GET` | `/health` | Health check for the running service |
+| `POST` | `/hospitals/validate` | Validate an uploaded CSV without creating hospitals |
+| `POST` | `/hospitals/bulk` | Upload a CSV and process the hospital batch |
+| `GET` | `/hospitals/bulk/{batch_id}` | Retrieve the stored result for a processed batch |
+
+Interactive request/response schemas are available in the [Swagger documentation](https://hospital-bulk-processing-fczp.onrender.com/docs).
+
+### Example CSV
 
 ```csv
 name,address,phone
@@ -24,88 +57,208 @@ City Care Hospital,45 Park Avenue,555-0102
 Sunrise Medical Center,78 Lake Road,
 ```
 
-Maximum 20 non-empty hospital rows. Upload size is limited to 1 MB.
+### Example requests
 
-## Run locally
-
-Python 3.10+ recommended.
+Validate a CSV:
 
 ```bash
+curl -X POST "https://hospital-bulk-processing-fczp.onrender.com/hospitals/validate" \
+  -H "accept: application/json" \
+  -F "file=@sample_hospitals.csv"
+```
+
+Process a bulk upload:
+
+```bash
+curl -X POST "https://hospital-bulk-processing-fczp.onrender.com/hospitals/bulk" \
+  -H "accept: application/json" \
+  -F "file=@sample_hospitals.csv"
+```
+
+Retrieve a batch result (replace `<batch_id>` with the UUID returned by the bulk endpoint):
+
+```bash
+curl -X GET "https://hospital-bulk-processing-fczp.onrender.com/hospitals/bulk/<batch_id>" \
+  -H "accept: application/json"
+```
+
+## Project Structure
+
+The application code is separated by responsibility to keep routing, request handling, business logic, validation, schemas, configuration, and HTML independent.
+
+```text
+Hospital-Bulk-Processing/
+├── app/
+│   ├── __init__.py
+│   ├── main.py                    # FastAPI application setup
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── routes.py              # API route definitions and router registration
+│   │   └── handlers.py            # Route/request handlers
+│   ├── core/
+│   │   ├── __init__.py
+│   │   └── config.py              # Environment-based configuration and limits
+│   ├── schemas/
+│   │   ├── __init__.py
+│   │   └── hospital.py            # Pydantic hospital data schemas
+│   ├── validators/
+│   │   ├── __init__.py
+│   │   └── csv_validator.py       # CSV parsing and validation
+│   ├── services/
+│   │   ├── __init__.py
+│   │   └── bulk_processor.py      # Upstream API calls and batch processing
+│   └── templates/
+│       └── index.html             # Browser-based upload page
+├── tests/
+│   ├── test_csv.py                # CSV validation tests
+│   └── test_processing.py         # Bulk-processing tests
+├── sample_hospitals.csv           # Sample input file
+├── requirements.txt               # Python dependencies
+├── pytest.ini                     # Pytest configuration
+├── Dockerfile                     # Docker image configuration
+├── .dockerignore
+├── .gitignore
+├── render.yaml                    # Render deployment configuration
+└── README.md
+```
+
+## Processing Workflow
+
+```text
+CSV Upload
+    |
+    v
+Validate file size, headers, and rows
+    |
+    v
+Generate UUID batch ID
+    |
+    v
+Create hospital records through the Hospital Directory API
+    |
+    +---- Any creation fails? ---- Yes ---> Report failures; do not activate batch
+    |
+    No
+    |
+    v
+PATCH upstream batch activation endpoint
+    |
+    v
+Return batch summary and per-hospital results
+```
+
+## Implementation Details
+
+- **Asynchronous HTTP requests:** Uses `httpx.AsyncClient` for calls to the upstream service.
+- **Concurrent processing:** Hospital creation requests are run concurrently with a configurable concurrency limit.
+- **Batch identification:** Generates a UUID and sends it as `creation_batch_id` for each hospital.
+- **Conditional activation:** The batch is activated only if all hospital creation operations succeed.
+- **Validation:** Checks CSV headers and records, enforces the 20-hospital limit, and rejects files larger than 1 MB.
+- **Failure reporting:** Captures individual hospital outcomes and reports processing and activation failures.
+- **Batch lookup:** Keeps processing results in memory so they can be retrieved by batch ID while the process remains running.
+- **Automated tests:** Includes tests for CSV validation and bulk-processing behavior.
+- **Container support:** Includes a Dockerfile.
+- **Deployment configuration:** Includes `render.yaml` for Render deployment.
+
+## Configuration
+
+The upstream API URL and processing limits are configured in the application. The upstream URL can be supplied through this environment variable:
+
+| Variable | Description | Value used in deployment |
+|---|---|---|
+| `HOSPITAL_DIRECTORY_API_URL` | Base URL of the Hospital Directory API | `https://hospital-directory.onrender.com` |
+
+The Render service uses Python 3.11.9. Its build and start commands are:
+
+```bash
+pip install -r requirements.txt
+```
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port $PORT
+```
+
+## Run Locally
+
+Python 3.10+ is recommended.
+
+```bash
+# Create and activate a virtual environment
 python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# macOS/Linux:
+
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+
+# macOS / Linux
 source .venv/bin/activate
 
+# Install dependencies
 pip install -r requirements.txt
+
+# Start the API
 uvicorn app.main:app --reload
 ```
 
-Open:
-- Web interface: http://127.0.0.1:8000
-- Swagger: http://127.0.0.1:8000/docs
-- Health: http://127.0.0.1:8000/health
+Open these local URLs:
 
-## Test
+- Web interface: http://127.0.0.1:8000/
+- Swagger documentation: http://127.0.0.1:8000/docs
+- Health check: http://127.0.0.1:8000/health
+
+## Run Tests
 
 ```bash
 pytest -q
 ```
 
-## API examples
+## Run with Docker
 
-Validate a CSV:
-
-```bash
-curl -X POST http://127.0.0.1:8000/hospitals/validate \
-  -F "file=@sample_hospitals.csv"
-```
-
-Bulk create:
+Build the image:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/hospitals/bulk \
-  -F "file=@sample_hospitals.csv"
+docker build -t hospital-bulk-processing .
 ```
 
-Fetch a batch result:
+Run the container:
 
 ```bash
-curl http://127.0.0.1:8000/hospitals/bulk/<batch_id>
+docker run --rm -p 8000:8000 \
+  -e HOSPITAL_DIRECTORY_API_URL=https://hospital-directory.onrender.com \
+  hospital-bulk-processing
 ```
 
-## Deployment on Render (free web service)
+Then open http://127.0.0.1:8000/docs.
 
-1. Push this project to a GitHub repository.
-2. Sign in at https://render.com and choose **New → Web Service**.
-3. Connect the repository.
-4. Select **Free** as the instance type.
-5. Build command: `pip install -r requirements.txt`
-6. Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-7. Add environment variable:
-   - `HOSPITAL_DIRECTORY_API_URL` = `https://hospital-directory.onrender.com`
-8. Deploy. Your public app URL will look like `https://your-service-name.onrender.com`.
+## Deployment
 
-The included `render.yaml` can also be used for Blueprint deployment.
+The service is deployed on [Render](https://render.com) and connected to the GitHub repository.
 
-**Free-tier note:** Render free web services sleep after 15 minutes without inbound traffic and can take around a minute to wake. In-memory batch history is lost when the process restarts, and free instances are not intended for production. The first request to the supplied Hospital Directory API may also be slow if that service is sleeping.
+- **Render service URL:** https://hospital-bulk-processing-fczp.onrender.com
+- **Swagger URL:** https://hospital-bulk-processing-fczp.onrender.com/docs
+- **Health-check URL:** https://hospital-bulk-processing-fczp.onrender.com/health
+- **Deployment configuration:** `render.yaml`
+- **Auto-deploy:** Enabled for commits pushed to the connected deployment branch.
 
-## Docker
+To deploy an update, commit and push the changes to the connected GitHub branch. Render will start a new deployment automatically when Auto-Deploy is enabled. Check the service's **Events** page and confirm the latest deployment status is **Live**.
 
-```bash
-docker build -t paribus-hospital-bulk .
-docker run -p 8000:8000 paribus-hospital-bulk
-```
+## Limitations and Possible Improvements
 
-## Design notes and assumptions
+- Batch results are held in process memory. They are not durable and may be lost when the service restarts or is redeployed.
+- The batch-result endpoint returns the stored result after processing; it is not a durable, real-time progress stream.
+- If some hospital creations succeed and another fails, the successful upstream records remain inactive; the batch is not activated. A retry or compensation workflow could be added.
+- If the upstream activation request fails, the service reports the activation failure; created records may remain inactive.
+- For production use, batch state could be persisted in PostgreSQL or Redis, and processing could be moved to a durable task queue with retry/backoff, idempotency, authentication, rate limiting, and operational monitoring.
 
-- The supplied API model names the batch field `creation_batch_id`; this implementation sends that field when creating each hospital.
-- A batch is activated only if every hospital creation succeeds.
-- If a create request fails, successful records remain inactive in the external API. The app reports the failed rows and does not activate the batch. A production-grade extension could add an explicit retry/compensation workflow.
-- If activation itself fails, the response reports `activation_failed`; created records may remain inactive.
-- The assignment permits in-memory persistence. The result lookup therefore works only while the same application process retains the result.
-- The external API's OpenAPI schema should be checked before final submission to confirm its exact request/response fields and status codes.
+## Upstream Hospital Directory API
 
-## Suggested improvements
+The bulk service integrates with the following supplied endpoints:
 
-For a production implementation: persist batch state in PostgreSQL/Redis, move processing to a durable task queue, add idempotency keys and retry/backoff policies, expose true live progress, add authentication/rate limiting, and implement cleanup or compensation for partially created batches.
+| Method | Upstream endpoint | Purpose |
+|---|---|---|
+| `POST` | `/hospitals/` | Create an individual hospital |
+| `GET` | `/hospitals/` | List hospitals |
+| `GET` | `/hospitals/batch/{batch_id}` | Retrieve hospitals belonging to a batch |
+| `PATCH` | `/hospitals/batch/{batch_id}/activate` | Activate all hospitals in a batch |
+| `DELETE` | `/hospitals/batch/{batch_id}` | Delete hospitals belonging to a batch |
+
+See the upstream [Swagger documentation](https://hospital-directory.onrender.com/docs) for its complete API contract.
